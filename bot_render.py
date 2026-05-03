@@ -624,9 +624,12 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT telegram_id, first_name, username, referred_by,
-                           to_char(joined_at, 'DD.MM.YYYY HH24:MI')
-                    FROM users ORDER BY joined_at DESC
+                    SELECT u.telegram_id, u.first_name, u.username,
+                           r.first_name, r.username,
+                           to_char(u.joined_at, 'DD.MM.YYYY HH24:MI')
+                    FROM users u
+                    LEFT JOIN users r ON r.telegram_id = u.referred_by
+                    ORDER BY u.joined_at DESC
                 """)
                 rows = cur.fetchall()
         if not rows:
@@ -637,9 +640,15 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buf = io.StringIO()
         buf.write("﻿")  # BOM для корректного открытия в Excel
         w = csv.writer(buf, delimiter=";")
-        w.writerow(["#", "Имя", "Username", "Telegram ID", "Пришёл от (ID)", "Дата входа"])
-        for i, (tid, name, uname, ref, dt) in enumerate(rows, 1):
-            w.writerow([i, name, f"@{uname}" if uname else "", tid, ref or "", dt])
+        w.writerow(["#", "Имя", "Username", "Telegram ID", "Пришёл от", "Дата входа"])
+        for i, (tid, name, uname, ref_name, ref_uname, dt) in enumerate(rows, 1):
+            if ref_uname:
+                ref_str = f"@{ref_uname}"
+            elif ref_name:
+                ref_str = ref_name
+            else:
+                ref_str = ""
+            w.writerow([i, name, f"@{uname}" if uname else "", tid, ref_str, dt])
 
         raw = buf.getvalue().encode("utf-8-sig")
         from datetime import date
@@ -783,6 +792,10 @@ async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb = kb_ooo_usn_d()
         elif data == "ip_usn_d":
             kb = kb_ip_usn_d()
+        elif data == "ooo_usn_d_records":
+            kb = None
+        elif data == "ip_usn_d_records":
+            kb = None
         elif data.startswith("ooo_"):
             kb = kb_files_ooo()
         elif data.startswith("ip_"):
