@@ -19,6 +19,7 @@ GUIDE_OOO    = Path("files/Гайд_ООО_2026.docx")
 TEMPLATE_OOO = Path("files/Шаблон_ООО_2026.xlsx")
 GUIDE_SAMO   = Path("files/Гайд_Самозанятые_2026.docx")
 GUIDE_3NDFL  = Path("files/Гайд_3НДФЛ_2026.docx")
+GUIDE_115FZ  = Path("files/Гайд_115ФЗ_2026.docx")
 WB_FIZ       = Path("files/Тетрадь_Справки_и_декларация.docx")
 WB_IP        = Path("files/Тетрадь_Налоговые_вычеты.docx")
 WB_SAMO      = Path("files/Тетрадь_Самозанятый_или_ИП.docx")
@@ -190,6 +191,7 @@ def kb_fiz():
         [InlineKeyboardButton("ℹ️ Налоги физических лиц",       callback_data="fiz_info")],
         [InlineKeyboardButton("📝 3-НДФЛ — подать декларацию",  callback_data="fiz_3ndfl")],
         [InlineKeyboardButton("📓 Рабочая тетрадь — 3-НДФЛ",   callback_data="dl_wb_fiz")],
+        [InlineKeyboardButton("🔒 Блокировка по 115-ФЗ",        callback_data="fiz_115fz")],
         [consult_btn("💬 Консультация", "физическое лицо")],
     ])
 
@@ -452,6 +454,28 @@ T = {
     "• Первичные документы\n"
     "• Бухгалтерские регистры\n"
     "• Банковские выписки"
+),
+
+"fiz_115fz": (
+    "🔒 <b>Блокировка счёта по 115-ФЗ</b>\n\n"
+    "<b>За что блокируют чаще всего:</b>\n"
+    "• Транзитные операции (пришло → сразу ушло)\n"
+    "• Снятие наличных сразу после поступления\n"
+    "• Дробление платежей (структурирование)\n"
+    "• Непонятное назначение платежа\n"
+    "• Непредоставление документов по запросу банка\n\n"
+    "<b>Как избежать:</b>\n"
+    "• Всегда указывайте точное назначение платежа (номер договора, дата)\n"
+    "• Храните все первичные документы — договоры, акты, счета\n"
+    "• Отвечайте на запросы банка в течение 2–3 дней\n"
+    "• Не снимайте наличные без необходимости\n\n"
+    "<b>Счёт заблокировали? Первые шаги:</b>\n"
+    "1. Звоните в банк — узнайте причину и список документов\n"
+    "2. Собирайте договоры, акты, выписки\n"
+    "3. Пишите объяснительную о происхождении средств\n"
+    "4. Нет ответа 3–5 дней → жалоба в ЦБ РФ (cbr.ru)\n\n"
+    "📄 В гайде — полный разбор 10 причин блокировок, 8 правил защиты "
+    "и 3 готовых шаблона ответа на запросы банка 👇"
 ),
 
 "fiz_3ndfl": (
@@ -728,6 +752,10 @@ async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb = kb_back_samo()
         elif data == "fiz_3ndfl":
             kb = kb_back_3ndfl()
+        elif data == "fiz_115fz":
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("📄 Скачать гайд по 115-ФЗ", callback_data="dl_guide_115fz")
+            ]])
         else:
             kb = None
         await q.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
@@ -767,6 +795,12 @@ async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "dl_wb_samo":
         await send_file(q.message.reply_document, WB_SAMO,
             "📓 <b>Рабочая тетрадь — Мой статус: Самозанятый или ИП?</b>\n\nЕсли остались вопросы — пишите мне: 💬 @Nadezhda_Gizh")
+
+    elif data == "dl_guide_115fz":
+        await send_file(q.message.reply_document, GUIDE_115FZ,
+            "📄 <b>Гайд: Блокировка счёта по 115-ФЗ</b>\n\n"
+            "Внутри: 10 причин блокировок, 8 правил защиты, быстрые решения и 3 готовых шаблона ответа банку.\n\n"
+            "Если счёт уже заблокировали — пишите: 💬 @Nadezhda_Gizh")
 
     elif data == "ref_tree":
         uid = q.from_user.id
