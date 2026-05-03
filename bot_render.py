@@ -401,8 +401,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user(user.id, user.username, user.first_name, referred_by)
 
     await update.message.reply_text(
-        "👋 Привет! Я помощник <b>Надежды Гижинской</b> — бухгалтера для предпринимателей.\n\n"
-        "Выберите нужный раздел 👇",
+        f"Здравствуйте, {user.first_name}! 👋\n\n"
+        "Рада видеть вас в своём пространстве.\n\n"
+        "Я — <b>Надежда Гижинская</b>, бухгалтер для предпринимателей.\n"
+        "Здесь вы найдёте всё необходимое: гайды, шаблоны, ответы на налоговые вопросы — "
+        "просто и понятно, без лишней воды.\n\n"
+        "Выберите, что вас интересует 👇",
         parse_mode="HTML",
         reply_markup=MAIN_KB,
     )
@@ -419,6 +423,34 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔆 Сегодня: <b>{today}</b>",
         parse_mode="HTML",
     )
+
+
+async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not DB_URL:
+        await update.message.reply_text("База данных не подключена.")
+        return
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT first_name, username, referred_by,
+                           to_char(joined_at, 'DD.MM.YYYY HH24:MI')
+                    FROM users ORDER BY joined_at DESC LIMIT 20
+                """)
+                rows = cur.fetchall()
+        if not rows:
+            await update.message.reply_text("База пуста.")
+            return
+        lines = ["👥 <b>Последние 20 пользователей:</b>\n"]
+        for i, (name, uname, ref, dt) in enumerate(rows, 1):
+            uname_str = f"@{uname}" if uname else "—"
+            ref_str = f" ← реф.{ref}" if ref else ""
+            lines.append(f"{i}. {name} ({uname_str}){ref_str} — {dt}")
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка: {e}")
 
 
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -442,45 +474,46 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML", reply_markup=kb_fiz())
 
     elif txt == "📞 Консультация":
-        msg = "Добрый день, я хотел бы обратиться к вам за консультацией. У меня вопрос: ..."
+        msg = "Добрый день, Надежда! Хотела бы обратиться к вам за консультацией. У меня вопрос: ..."
         url = f"https://t.me/{TG_NICK}?text={quote(msg)}"
         await update.message.reply_text(
-            "📞 <b>Консультация с бухгалтером</b>\n\n"
-            "Надежда Гижинская — бухгалтер для предпринимателей\n\n"
+            "📞 <b>Консультация</b>\n\n"
+            "Буду рада разобрать ваш вопрос лично.\n\n"
+            "Пишите — отвечу в течение дня:\n"
             "💬 @Nadezhda_Gizh\n"
             "📱 +7 (921) 593-51-16\n"
             "📧 gizhinskayanadysha@gmail.com",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("💬 Написать в Telegram", url=url)
+                InlineKeyboardButton("💬 Написать мне в Telegram", url=url)
             ]])
         )
 
     elif txt == "💸 Отблагодарить":
         await update.message.reply_text(
-            "💸 <b>Отблагодарить</b>\n\n"
-            "Если материалы оказались полезными — буду рада 🙏\n\n"
-            "Перевод по номеру телефона:\n"
+            "💸 <b>Поддержать</b>\n\n"
+            "Если материалы оказались вам полезными — буду искренне рада 🙏\n\n"
+            "Вы можете поддержать меня переводом:\n"
             "📱 <b>+7 (921) 593-51-16</b>\n"
             "🏦 Тинькофф (СБП)\n\n"
-            "Или оставьте отзыв — это тоже очень ценно!\n"
-            "Каждое слово поддержки помогает расти 🌱",
+            "А ещё очень ценен ваш отзыв — каждое слово помогает мне расти и помогать другим 🌱",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⭐ Написать отзыв", url="https://t.me/FeedbackNadinBuh"),
+                InlineKeyboardButton("⭐ Оставить отзыв", url="https://t.me/FeedbackNadinBuh"),
             ]]),
         )
 
     elif txt == "⭐ Отзывы":
         await update.message.reply_text(
             "⭐ <b>Отзывы</b>\n\n"
-            "Уже пользовались материалами или были на консультации?\n\n"
-            "Поделитесь своим опытом — это помогает другим предпринимателям "
-            "найти надёжного бухгалтера и принять правильное решение 🙏\n\n"
-            "Буду очень благодарна за ваш отзыв! 👇",
+            "Если вы уже работали со мной или воспользовались материалами — "
+            "буду очень благодарна за ваш отзыв.\n\n"
+            "Это помогает другим предпринимателям найти надёжного бухгалтера "
+            "и принять правильное решение 🙏\n\n"
+            "Жду вас здесь 👇",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⭐ Написать отзыв", url="https://t.me/FeedbackNadinBuh"),
+                InlineKeyboardButton("⭐ Оставить отзыв", url="https://t.me/FeedbackNadinBuh"),
             ]]),
         )
 
@@ -489,12 +522,14 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         count = get_referral_count(user.id)
         await update.message.reply_text(
             f"🔗 <b>Ваша реферальная ссылка</b>\n\n"
-            f"Поделитесь ссылкой — и друзья получат удобный доступ к материалам по бухгалтерии:\n\n"
+            f"Поделитесь ссылкой с коллегами и знакомыми — "
+            f"пусть тоже получат удобный доступ к материалам по налогам и бухгалтерии:\n\n"
             f"<code>{ref_link}</code>\n\n"
-            f"👥 По вашей ссылке пришли: <b>{count}</b> чел.",
+            f"👥 По вашей ссылке пришли: <b>{count}</b> чел.\n\n"
+            f"Спасибо, что рекомендуете меня! 🙏",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📤 Поделиться", url=f"https://t.me/share/url?url={quote(ref_link)}&text={quote('Полезный бот по налогам и бухгалтерии от Надежды Гижинской 👇')}")
+                InlineKeyboardButton("📤 Поделиться", url=f"https://t.me/share/url?url={quote(ref_link)}&text={quote('Бот по налогам и бухгалтерии от Надежды Гижинской — всё понятно и по делу 👇')}")
             ]])
         )
 
@@ -557,47 +592,47 @@ async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "samo_guide":
         await send_file(q.message.reply_document, GUIDE_SAMO,
-            "📄 <b>Гайд для самозанятых 2026</b>\n\n💬 @Nadezhda_Gizh | 📱 +7 (921) 593-51-16")
+            "📄 <b>Гайд для самозанятых 2026</b>\n\nЕсли остались вопросы — пишите мне: 💬 @Nadezhda_Gizh")
 
     elif data == "dl_guide_3ndfl":
         await send_file(q.message.reply_document, GUIDE_3NDFL,
-            "📄 <b>Пошаговый гайд по подаче 3-НДФЛ</b>\n\n💬 @Nadezhda_Gizh | 📱 +7 (921) 593-51-16")
+            "📄 <b>Пошаговый гайд по подаче 3-НДФЛ</b>\n\nЕсли остались вопросы — пишите мне: 💬 @Nadezhda_Gizh")
 
     elif data == "dl_guide_ooo":
         await send_file(q.message.reply_document, GUIDE_OOO,
-            "📄 <b>Гайд для ООО 2026</b>\n\n💬 @Nadezhda_Gizh | 📱 +7 (921) 593-51-16")
+            "📄 <b>Гайд для ООО 2026</b>\n\nЕсли остались вопросы — пишите мне: 💬 @Nadezhda_Gizh")
 
     elif data == "dl_tmpl_ooo":
         await send_file(q.message.reply_document, TEMPLATE_OOO,
-            "📊 <b>Шаблон учёта для ООО 2026</b>\n\n💬 @Nadezhda_Gizh | 📱 +7 (921) 593-51-16")
+            "📊 <b>Шаблон учёта для ООО 2026</b>\n\nЕсли остались вопросы — пишите мне: 💬 @Nadezhda_Gizh")
 
     elif data == "dl_guide_ip":
         await send_file(q.message.reply_document, GUIDE_IP,
-            "📄 <b>Гайд «Доходы и расходы ИП 2026»</b>\n\n💬 @Nadezhda_Gizh | 📱 +7 (921) 593-51-16")
+            "📄 <b>Гайд «Доходы и расходы ИП 2026»</b>\n\nЕсли остались вопросы — пишите мне: 💬 @Nadezhda_Gizh")
 
     elif data == "dl_tmpl_ip":
         await send_file(q.message.reply_document, TEMPLATE_IP,
-            "📊 <b>Шаблон учёта доходов и расходов ИП 2026</b>\n\n💬 @Nadezhda_Gizh | 📱 +7 (921) 593-51-16")
+            "📊 <b>Шаблон учёта доходов и расходов ИП 2026</b>\n\nЕсли остались вопросы — пишите мне: 💬 @Nadezhda_Gizh")
 
     elif data == "dl_wb_fiz":
         await send_file(q.message.reply_document, WB_FIZ,
-            "📓 <b>Рабочая тетрадь — Справки и декларация (3-НДФЛ)</b>\n\n💬 @Nadezhda_Gizh | 📱 +7 (921) 593-51-16")
+            "📓 <b>Рабочая тетрадь — Справки и декларация (3-НДФЛ)</b>\n\nЕсли остались вопросы — пишите мне: 💬 @Nadezhda_Gizh")
 
     elif data == "dl_wb_ip":
         await send_file(q.message.reply_document, WB_IP,
-            "📓 <b>Рабочая тетрадь — Мои налоговые вычеты</b>\n\n💬 @Nadezhda_Gizh | 📱 +7 (921) 593-51-16")
+            "📓 <b>Рабочая тетрадь — Мои налоговые вычеты</b>\n\nЕсли остались вопросы — пишите мне: 💬 @Nadezhda_Gizh")
 
     elif data == "dl_wb_samo":
         await send_file(q.message.reply_document, WB_SAMO,
-            "📓 <b>Рабочая тетрадь — Мой статус: Самозанятый или ИП?</b>\n\n💬 @Nadezhda_Gizh | 📱 +7 (921) 593-51-16")
+            "📓 <b>Рабочая тетрадь — Мой статус: Самозанятый или ИП?</b>\n\nЕсли остались вопросы — пишите мне: 💬 @Nadezhda_Gizh")
 
 
 async def send_file(reply_fn, path: Path, caption: str):
     if not path.exists():
         await reply_fn(
-            "📎 Файл будет доступен в ближайшее время.\n"
-            "Напишите напрямую — пришлю лично!\n\n"
-            "💬 @Nadezhda_Gizh | 📱 +7 (921) 593-51-16"
+            "📎 Файл скоро появится здесь.\n"
+            "Пока можете написать мне напрямую — пришлю лично!\n\n"
+            "💬 @Nadezhda_Gizh"
         )
         return
     await reply_fn(document=path.open("rb"), filename=path.name,
@@ -612,6 +647,7 @@ def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("users", cmd_users))
     app.add_handler(MessageHandler(
         filters.FORWARDED & filters.ChatType.PRIVATE,
         handle_forward_broadcast,
