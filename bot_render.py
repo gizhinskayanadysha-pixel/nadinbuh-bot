@@ -614,6 +614,45 @@ async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Ошибка: {e}")
 
 
+async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not DB_URL:
+        await update.message.reply_text("База данных не подключена.")
+        return
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT telegram_id, first_name, username, referred_by,
+                           to_char(joined_at, 'DD.MM.YYYY HH24:MI')
+                    FROM users ORDER BY joined_at DESC
+                """)
+                rows = cur.fetchall()
+        if not rows:
+            await update.message.reply_text("База пуста.")
+            return
+
+        import io, csv
+        buf = io.StringIO()
+        buf.write("﻿")  # BOM для корректного открытия в Excel
+        w = csv.writer(buf, delimiter=";")
+        w.writerow(["#", "Имя", "Username", "Telegram ID", "Пришёл от (ID)", "Дата входа"])
+        for i, (tid, name, uname, ref, dt) in enumerate(rows, 1):
+            w.writerow([i, name, f"@{uname}" if uname else "", tid, ref or "", dt])
+
+        raw = buf.getvalue().encode("utf-8-sig")
+        from datetime import date
+        fname = f"users_{date.today().strftime('%Y%m%d')}.csv"
+        await update.message.reply_document(
+            document=io.BytesIO(raw),
+            filename=fname,
+            caption=f"📊 База пользователей — {len(rows)} чел.\nОткрывается в Excel (разделитель — точка с запятой).",
+        )
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка: {e}")
+
+
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
     user = update.effective_user
@@ -843,6 +882,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("users", cmd_users))
+    app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CallbackQueryHandler(consent_callback, pattern="^consent_"))
     app.add_handler(MessageHandler(
         filters.FORWARDED & filters.ChatType.PRIVATE,
