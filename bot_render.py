@@ -8,8 +8,10 @@ from urllib.parse import quote
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-TOKEN   = os.environ.get("BOT_TOKEN", "8302400236:AAFE1Y_SIHh8RVOH2_8mstekgUHh6Yge__E")
-TG_NICK = "Nadezhda_Gizh"
+TOKEN    = os.environ.get("BOT_TOKEN", "8696501429:AAEq8Vs0OfPP0nfzSc2jUmErQBwvGonmEjE")
+TG_NICK  = "Nadezhda_Gizh"
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+DB_URL   = os.environ.get("DATABASE_URL", "")
 
 GUIDE_IP     = Path("files/Гайд_Доходы_Расходы_ИП_2026.docx")
 TEMPLATE_IP  = Path("files/Шаблон_Доходы_Расходы_ИП_2026.xlsx")
@@ -25,6 +27,91 @@ logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=loggin
 log = logging.getLogger(__name__)
 
 
+# ── База данных ───────────────────────────────────────────────────────────────
+
+def get_db():
+    import psycopg2
+    return psycopg2.connect(DB_URL)
+
+def init_db():
+    if not DB_URL:
+        return
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        telegram_id BIGINT PRIMARY KEY,
+                        username    TEXT,
+                        first_name  TEXT,
+                        referred_by BIGINT,
+                        joined_at   TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+            conn.commit()
+        log.info("DB ready")
+    except Exception as e:
+        log.error(f"DB init error: {e}")
+
+def save_user(telegram_id: int, username: str, first_name: str, referred_by: int | None = None):
+    if not DB_URL:
+        return
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO users (telegram_id, username, first_name, referred_by)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (telegram_id) DO NOTHING
+                """, (telegram_id, username, first_name, referred_by))
+            conn.commit()
+    except Exception as e:
+        log.error(f"save_user error: {e}")
+
+def get_all_user_ids() -> list[int]:
+    if not DB_URL:
+        return []
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT telegram_id FROM users")
+                return [row[0] for row in cur.fetchall()]
+    except Exception as e:
+        log.error(f"get_all_user_ids error: {e}")
+        return []
+
+def get_stats() -> tuple[int, int, int]:
+    if not DB_URL:
+        return 0, 0, 0
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM users")
+                total = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(*) FROM users WHERE joined_at > NOW() - INTERVAL '7 days'")
+                week = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(*) FROM users WHERE joined_at > NOW() - INTERVAL '1 day'")
+                today = cur.fetchone()[0]
+                return total, week, today
+    except Exception as e:
+        log.error(f"get_stats error: {e}")
+        return 0, 0, 0
+
+def get_referral_count(telegram_id: int) -> int:
+    if not DB_URL:
+        return 0
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM users WHERE referred_by = %s", (telegram_id,))
+                return cur.fetchone()[0]
+    except Exception as e:
+        log.error(f"get_referral_count error: {e}")
+        return 0
+
+
+# ── Клавиатуры ────────────────────────────────────────────────────────────────
+
 def consult_btn(label: str, context_text: str) -> InlineKeyboardButton:
     msg = f"Добрый день, я хотел бы обратиться к вам за консультацией. У меня {context_text}. У меня вопрос: ..."
     return InlineKeyboardButton(label, url=f"https://t.me/{TG_NICK}?text={quote(msg)}")
@@ -34,7 +121,7 @@ MAIN_KB = ReplyKeyboardMarkup([
     ["🏢 ООО",         "💼 ИП"],
     ["🧑‍💻 Самозанятый", "👤 Физ лица"],
     ["📞 Консультация", "💸 Отблагодарить"],
-    ["⭐ Отзывы"],
+    ["⭐ Отзывы",      "🔗 Моя реф. ссылка"],
 ], resize_keyboard=True, input_field_placeholder="Выберите раздел 👇")
 
 
@@ -67,9 +154,9 @@ def kb_samo():
 
 def kb_fiz():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("ℹ️ Налоги физических лиц",        callback_data="fiz_info")],
-        [InlineKeyboardButton("📝 3-НДФЛ — подать декларацию",   callback_data="fiz_3ndfl")],
-        [InlineKeyboardButton("📓 Рабочая тетрадь — 3-НДФЛ",    callback_data="dl_wb_fiz")],
+        [InlineKeyboardButton("ℹ️ Налоги физических лиц",       callback_data="fiz_info")],
+        [InlineKeyboardButton("📝 3-НДФЛ — подать декларацию",  callback_data="fiz_3ndfl")],
+        [InlineKeyboardButton("📓 Рабочая тетрадь — 3-НДФЛ",   callback_data="dl_wb_fiz")],
         [consult_btn("💬 Консультация", "физическое лицо")],
     ])
 
@@ -95,6 +182,8 @@ def kb_back_3ndfl():
         InlineKeyboardButton("📄 Скачать гайд 3-НДФЛ", callback_data="dl_guide_3ndfl"),
     ]])
 
+
+# ── Тексты ────────────────────────────────────────────────────────────────────
 
 T = {
 
@@ -151,7 +240,7 @@ T = {
 ),
 
 "ip_usn_d": (
-    "🏗📗 <b>ИП — УСН «Доходы»</b>\n\n"
+    "💼📗 <b>ИП — УСН «Доходы»</b>\n\n"
     "<b>Ставка:</b> 6% (регионы могут снижать до 1%)\n"
     "СПб — 6%, ЛО — 6%\n\n"
     "<b>Лимиты 2026:</b>\n"
@@ -166,7 +255,7 @@ T = {
 ),
 
 "ip_usn_dr": (
-    "🏗📘 <b>ИП — УСН «Доходы−Расходы»</b>\n\n"
+    "💼📘 <b>ИП — УСН «Доходы−Расходы»</b>\n\n"
     "<b>Ставка:</b> 15% с разницы\n"
     "СПб — 7%, ЛО — 5%\n\n"
     "<b>Минимальный налог:</b> 1% от дохода\n\n"
@@ -178,7 +267,7 @@ T = {
 ),
 
 "ip_hire": (
-    "🏗👥 <b>ИП — Найм сотрудников</b>\n\n"
+    "💼👥 <b>ИП — Найм сотрудников</b>\n\n"
     "<b>Документы при оформлении:</b>\n"
     "• Трудовой договор\n"
     "• Приказ о приёме\n"
@@ -196,7 +285,7 @@ T = {
 ),
 
 "ip_vznosy": (
-    "🏗💰 <b>ИП — Фиксированные страховые взносы 2026</b>\n\n"
+    "💼💰 <b>ИП — Фиксированные страховые взносы 2026</b>\n\n"
     "<b>Фиксированная часть:</b> 57 390 руб.\n"
     "Срок уплаты: до 31 декабря 2026\n\n"
     "<b>Дополнительный взнос:</b> 1% с дохода свыше 300 000 руб.\n"
@@ -248,7 +337,7 @@ T = {
     "• Чек из «Мой налог» — <b>обязателен</b>\n\n"
     "<b>Итого — что отдавать клиенту:</b>\n"
     "👤 Физлицо: чек\n"
-    "🏗 ИП: договор + чек\n"
+    "💼 ИП: договор + чек\n"
     "🏢 ООО: договор + акт + чек"
 ),
 
@@ -293,7 +382,24 @@ T = {
 }
 
 
+# ── Хендлеры ─────────────────────────────────────────────────────────────────
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    referred_by = None
+
+    if context.args:
+        arg = context.args[0]
+        if arg.startswith("ref_"):
+            try:
+                referred_by = int(arg[4:])
+                if referred_by == user.id:
+                    referred_by = None
+            except ValueError:
+                pass
+
+    save_user(user.id, user.username, user.first_name, referred_by)
+
     await update.message.reply_text(
         "👋 Привет! Я помощник <b>Надежды Гижинской</b> — бухгалтера для предпринимателей.\n\n"
         "Выберите нужный раздел 👇",
@@ -302,8 +408,22 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    total, week, today = get_stats()
+    await update.message.reply_text(
+        f"📊 <b>Статистика бота</b>\n\n"
+        f"👥 Всего пользователей: <b>{total}</b>\n"
+        f"📅 За последние 7 дней: <b>{week}</b>\n"
+        f"🔆 Сегодня: <b>{today}</b>",
+        parse_mode="HTML",
+    )
+
+
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
+    user = update.effective_user
 
     if txt == "🏢 ООО":
         await update.message.reply_text("🏢 <b>ООО</b> — выберите тему:",
@@ -363,6 +483,57 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("⭐ Написать отзыв", url="https://t.me/FeedbackNadinBuh"),
             ]]),
         )
+
+    elif txt == "🔗 Моя реф. ссылка":
+        ref_link = f"https://t.me/NadinBuhAssistBot?start=ref_{user.id}"
+        count = get_referral_count(user.id)
+        await update.message.reply_text(
+            f"🔗 <b>Ваша реферальная ссылка</b>\n\n"
+            f"Поделитесь ссылкой — и друзья получат удобный доступ к материалам по бухгалтерии:\n\n"
+            f"<code>{ref_link}</code>\n\n"
+            f"👥 По вашей ссылке пришли: <b>{count}</b> чел.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📤 Поделиться", url=f"https://t.me/share/url?url={quote(ref_link)}&text={quote('Полезный бот по налогам и бухгалтерии от Надежды Гижинской 👇')}")
+            ]])
+        )
+
+
+async def handle_forward_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пересланное сообщение от админа → рассылка всем пользователям."""
+    msg = update.message
+    if not msg or msg.chat_id != ADMIN_ID:
+        return
+    # Проверяем что сообщение пересланное
+    if not (msg.forward_origin or msg.forward_date):
+        return
+
+    user_ids = get_all_user_ids()
+    if not user_ids:
+        await msg.reply_text("⚠️ База пользователей пуста.")
+        return
+
+    await msg.reply_text(f"📤 Начинаю рассылку {len(user_ids)} пользователям...")
+
+    success, failed = 0, 0
+    for uid in user_ids:
+        if uid == ADMIN_ID:
+            continue
+        try:
+            await context.bot.forward_message(
+                chat_id=uid,
+                from_chat_id=msg.chat_id,
+                message_id=msg.message_id,
+            )
+            success += 1
+        except Exception:
+            failed += 1
+
+    await msg.reply_text(
+        f"✅ Разослано: <b>{success}</b>\n"
+        f"❌ Не доставлено: <b>{failed}</b>",
+        parse_mode="HTML",
+    )
 
 
 async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -433,9 +604,18 @@ async def send_file(reply_fn, path: Path, caption: str):
                    caption=caption, parse_mode="HTML")
 
 
+# ── Запуск ────────────────────────────────────────────────────────────────────
+
 def main():
+    init_db()
+
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(MessageHandler(
+        filters.FORWARDED & filters.ChatType.PRIVATE,
+        handle_forward_broadcast,
+    ))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu))
     app.add_handler(CallbackQueryHandler(cb_handler))
 
