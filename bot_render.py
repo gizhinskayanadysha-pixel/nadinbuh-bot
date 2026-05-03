@@ -109,6 +109,39 @@ def get_referral_count(telegram_id: int) -> int:
         log.error(f"get_referral_count error: {e}")
         return 0
 
+def user_exists(telegram_id: int) -> bool:
+    if not DB_URL:
+        return False
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM users WHERE telegram_id = %s", (telegram_id,))
+                return cur.fetchone() is not None
+    except Exception:
+        return False
+
+def get_referral_tree(telegram_id: int) -> tuple:
+    if not DB_URL:
+        return [], []
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT first_name, username FROM users WHERE referred_by = %s ORDER BY joined_at DESC",
+                    (telegram_id,)
+                )
+                direct = cur.fetchall()
+                cur.execute("""
+                    SELECT u.first_name, u.username FROM users u
+                    JOIN users ref ON ref.telegram_id = u.referred_by
+                    WHERE ref.referred_by = %s ORDER BY u.joined_at DESC
+                """, (telegram_id,))
+                indirect = cur.fetchall()
+                return direct, indirect
+    except Exception as e:
+        log.error(f"get_referral_tree error: {e}")
+        return [], []
+
 
 # ── Клавиатуры ────────────────────────────────────────────────────────────────
 
@@ -398,16 +431,60 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except ValueError:
                 pass
 
-    save_user(user.id, user.username, user.first_name, referred_by)
+    # Возвращающийся пользователь — сразу в меню
+    if user_exists(user.id):
+        await update.message.reply_text(
+            f"С возвращением, {user.first_name}! 👋\n\nВыберите нужный раздел 👇",
+            parse_mode="HTML",
+            reply_markup=MAIN_KB,
+        )
+        return
 
+    # Новый пользователь — показываем согласие на обработку данных
+    ref_param = str(referred_by) if referred_by else "0"
     await update.message.reply_text(
         f"Здравствуйте, {user.first_name}! 👋\n\n"
         "Рада видеть вас в своём пространстве.\n\n"
         "Я — <b>Надежда Гижинская</b>, бухгалтер для предпринимателей.\n"
-        "Здесь вы найдёте всё необходимое: гайды, шаблоны, ответы на налоговые вопросы — "
-        "просто и понятно, без лишней воды.\n\n"
-        "Выберите, что вас интересует 👇",
+        "Здесь вы найдёте гайды, шаблоны и ответы на налоговые вопросы — "
+        "просто и по делу.\n\n"
+        "──────────────────────\n"
+        "📋 <b>Согласие на обработку персональных данных</b>\n\n"
+        "Продолжая, вы соглашаетесь на обработку ваших данных "
+        "(имя, Telegram ID, username) в соответствии с ФЗ-152.\n\n"
+        "Данные используются только для работы бота и не передаются третьим лицам.\n"
+        "<i>Оператор: Гижинская Надежда Александровна</i>\n"
+        "<i>Отзыв согласия: @Nadezhda_Gizh</i>",
         parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Принимаю и продолжаю", callback_data=f"consent_{ref_param}")
+        ]])
+    )
+
+
+async def consent_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    user = q.from_user
+
+    ref_part = q.data.replace("consent_", "")
+    referred_by = int(ref_part) if ref_part != "0" else None
+
+    save_user(user.id, user.username, user.first_name, referred_by)
+
+    # Уведомить реферера о новом подключении
+    if referred_by:
+        try:
+            await context.bot.send_message(
+                chat_id=referred_by,
+                text=f"🎉 По вашей ссылке только что присоединился(ась) <b>{user.first_name}</b>!",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+    await q.message.reply_text(
+        "Добро пожаловать! Выберите нужный раздел 👇",
         reply_markup=MAIN_KB,
     )
 
@@ -528,9 +605,10 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👥 По вашей ссылке пришли: <b>{count}</b> чел.\n\n"
             f"Спасибо, что рекомендуете меня! 🙏",
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📤 Поделиться", url=f"https://t.me/share/url?url={quote(ref_link)}&text={quote('Бот по налогам и бухгалтерии от Надежды Гижинской — всё понятно и по делу 👇')}")
-            ]])
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📤 Поделиться", url=f"https://t.me/share/url?url={quote(ref_link)}&text={quote('Бот по налогам и бухгалтерии от Надежды Гижинской — всё понятно и по делу 👇')}")],
+                [InlineKeyboardButton("👥 Моя сеть рефералов", callback_data="ref_tree")],
+            ])
         )
 
 
@@ -626,6 +704,25 @@ async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_file(q.message.reply_document, WB_SAMO,
             "📓 <b>Рабочая тетрадь — Мой статус: Самозанятый или ИП?</b>\n\nЕсли остались вопросы — пишите мне: 💬 @Nadezhda_Gizh")
 
+    elif data == "ref_tree":
+        uid = q.from_user.id
+        direct, indirect = get_referral_tree(uid)
+        if not direct and not indirect:
+            await q.message.reply_text("По вашей ссылке пока никто не присоединился. Поделитесь — и здесь появится ваша сеть 🙂")
+            return
+        lines = ["👥 <b>Ваша реферальная сеть:</b>\n"]
+        if direct:
+            lines.append(f"<b>Прямые подключения ({len(direct)}):</b>")
+            for name, uname in direct:
+                u = f" (@{uname})" if uname else ""
+                lines.append(f"  • {name}{u}")
+        if indirect:
+            lines.append(f"\n<b>Косвенные подключения ({len(indirect)}):</b>")
+            for name, uname in indirect:
+                u = f" (@{uname})" if uname else ""
+                lines.append(f"  • {name}{u}")
+        await q.message.reply_text("\n".join(lines), parse_mode="HTML")
+
 
 async def send_file(reply_fn, path: Path, caption: str):
     if not path.exists():
@@ -648,6 +745,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("users", cmd_users))
+    app.add_handler(CallbackQueryHandler(consent_callback, pattern="^consent_"))
     app.add_handler(MessageHandler(
         filters.FORWARDED & filters.ChatType.PRIVATE,
         handle_forward_broadcast,
