@@ -502,6 +502,7 @@ T = {
 # ── Хендлеры ─────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.chat.send_action("typing")
     user = update.effective_user
     referred_by = None
 
@@ -537,7 +538,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Продолжая, вы соглашаетесь на обработку ваших данных "
         "(имя, Telegram ID, username) в соответствии с ФЗ-152.\n\n"
         "Данные используются только для работы бота и не передаются третьим лицам.\n"
-        "<i>Оператор: Гижинская Надежда Александровна</i>\n"
+        "<i>Оператор: Гижинская Надежда Николаевна</i>\n"
         "<i>Отзыв согласия: @Nadezhda_Gizh</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([[
@@ -666,6 +667,13 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
     user = update.effective_user
 
+    # Незарегистрированный пользователь — направляем к /start
+    if not user_exists(user.id):
+        await update.message.reply_text(
+            "👋 Чтобы начать, нажмите /start",
+        )
+        return
+
     if txt == "🏢 ООО":
         await update.message.reply_text("🏢 <b>ООО</b> — выберите тему:",
             parse_mode="HTML", reply_markup=kb_ooo())
@@ -741,6 +749,12 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("📤 Поделиться", url=f"https://t.me/share/url?url={quote(ref_link)}&text={quote('Бот по налогам и бухгалтерии от Надежды Гижинской — всё понятно и по делу 👇')}")],
                 [InlineKeyboardButton("👥 Моя сеть рефералов", callback_data="ref_tree")],
             ])
+        )
+
+    else:
+        await update.message.reply_text(
+            "Используйте кнопки меню ниже 👇",
+            reply_markup=MAIN_KB,
         )
 
 
