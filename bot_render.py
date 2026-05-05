@@ -758,18 +758,21 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif txt == "📞 Консультация":
         msg = "Добрый день, Надежда! Хотела бы обратиться к вам за консультацией. У меня вопрос: ..."
-        url = f"https://t.me/{TG_NICK}?text={quote(msg)}"
+        tg_url = f"https://t.me/{TG_NICK}?text={quote(msg)}"
         await update.message.reply_text(
             "📞 <b>Консультация</b>\n\n"
             "Буду рада разобрать ваш вопрос лично.\n\n"
-            "Пишите — отвечу в течение дня:\n"
+            "Пишите удобным способом — отвечу в течение дня:\n"
             "💬 @Nadezhda_Gizh\n"
             "📱 +7 (921) 593-51-16\n"
             "📧 gizhinskayanadysha@gmail.com",
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("💬 Написать мне в Telegram", url=url)
-            ]])
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 Telegram", url=tg_url),
+                 InlineKeyboardButton("📱 WhatsApp", url="https://wa.me/79215935116")],
+                [InlineKeyboardButton("✉️ Max (ВКонтакте)", url="https://vk.me/+79215935116"),
+                 InlineKeyboardButton("🔵 ВКонтакте", url="https://vk.com/nadinbuh")],
+            ])
         )
 
     elif txt == "💸 Отблагодарить":
