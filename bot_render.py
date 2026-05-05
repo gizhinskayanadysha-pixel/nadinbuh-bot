@@ -2,6 +2,7 @@
 """NadinBuh Bot — Бухгалтер Надежда"""
 
 import os
+import asyncio
 import logging
 from pathlib import Path
 from urllib.parse import quote
@@ -47,6 +48,17 @@ def init_db():
                         first_name  TEXT,
                         referred_by BIGINT,
                         joined_at   TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS leads (
+                        id         SERIAL PRIMARY KEY,
+                        name       TEXT,
+                        phone      TEXT,
+                        email      TEXT,
+                        message    TEXT,
+                        source     TEXT DEFAULT 'site',
+                        created_at TIMESTAMP DEFAULT NOW()
                     )
                 """)
             conn.commit()
@@ -97,6 +109,36 @@ def get_stats() -> tuple[int, int, int]:
     except Exception as e:
         log.error(f"get_stats error: {e}")
         return 0, 0, 0
+
+def save_lead(name: str, phone: str, email: str, message: str, source: str = "site"):
+    if not DB_URL:
+        return
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO leads (name, phone, email, message, source)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (name[:200], phone[:50], email[:200], message[:1000], source))
+            conn.commit()
+    except Exception as e:
+        log.error(f"save_lead error: {e}")
+
+def get_leads(limit: int = 20):
+    if not DB_URL:
+        return []
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT name, phone, email, message,
+                           to_char(created_at, 'DD.MM.YYYY HH24:MI')
+                    FROM leads ORDER BY created_at DESC LIMIT %s
+                """, (limit,))
+                return cur.fetchall()
+    except Exception as e:
+        log.error(f"get_leads error: {e}")
+        return []
 
 def get_referral_count(telegram_id: int) -> int:
     if not DB_URL:
@@ -539,8 +581,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "(имя, Telegram ID, username) в соответствии с ФЗ-152.\n\n"
         "Данные используются только для работы бота и не передаются третьим лицам.\n"
         "<i>Оператор: Гижинская Надежда Николаевна</i>\n"
-        "<i>Отзыв согласия: @Nadezhda_Gizh</i>",
+        "<i>Отзыв согласия: @Nadezhda_Gizh</i>\n\n"
+        "📄 <a href=\"https://nadinbuh.ru/privacy.html\">Политика конфиденциальности</a>",
         parse_mode="HTML",
+        disable_web_page_preview=True,
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("✅ Принимаю и продолжаю", callback_data=f"consent_{ref_param}")
         ]])
@@ -661,6 +705,28 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
+
+
+async def cmd_leads(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    rows = get_leads(20)
+    if not rows:
+        await update.message.reply_text("Заявок с сайта пока нет.")
+        return
+    lines = [f"📋 <b>Заявки с сайта — последние {len(rows)}:</b>\n"]
+    for name, phone, email, msg, dt in rows:
+        lines.append(
+            f"<b>{name}</b>\n"
+            f"📞 {phone}  📧 {email}\n"
+            f"💬 {msg or '—'}\n"
+            f"🕐 {dt}\n"
+        )
+    text = "\n".join(lines)
+    # Telegram лимит 4096 символов
+    if len(text) > 4000:
+        text = text[:4000] + "\n…(обрезано)"
+    await update.message.reply_text(text, parse_mode="HTML")
 
 
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -902,14 +968,13 @@ async def send_file(reply_fn, path: Path, caption: str):
 
 # ── Запуск ────────────────────────────────────────────────────────────────────
 
-def main():
-    init_db()
-
+def _build_app():
     app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("stats", cmd_stats))
-    app.add_handler(CommandHandler("users", cmd_users))
+    app.add_handler(CommandHandler("start",  cmd_start))
+    app.add_handler(CommandHandler("stats",  cmd_stats))
+    app.add_handler(CommandHandler("users",  cmd_users))
     app.add_handler(CommandHandler("export", cmd_export))
+    app.add_handler(CommandHandler("leads",  cmd_leads))
     app.add_handler(CallbackQueryHandler(consent_callback, pattern="^consent_"))
     app.add_handler(MessageHandler(
         filters.FORWARDED & filters.ChatType.PRIVATE,
@@ -917,22 +982,99 @@ def main():
     ))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu))
     app.add_handler(CallbackQueryHandler(cb_handler))
+    return app
 
-    port = int(os.environ.get("PORT", 8080))
+
+async def _run_webhook(ptb_app, render_host: str, port: int):
+    """Запускает aiohttp-сервер: Telegram webhook + /api/lead для заявок с сайта."""
+    from aiohttp import web
+
+    await ptb_app.initialize()
+    await ptb_app.bot.set_webhook(
+        url=f"https://{render_host}/{TOKEN}",
+        drop_pending_updates=True,
+    )
+    await ptb_app.start()
+    log.info(f"Webhook: https://{render_host}/{TOKEN}")
+
+    async def tg_webhook(request):
+        try:
+            data = await request.json()
+            update = Update.de_json(data, ptb_app.bot)
+            await ptb_app.process_update(update)
+        except Exception as exc:
+            log.error(f"tg_webhook error: {exc}")
+        return web.Response()
+
+    async def lead_api(request):
+        cors = {
+            "Access-Control-Allow-Origin":  "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        }
+        if request.method == "OPTIONS":
+            return web.Response(headers=cors)
+        try:
+            data = await request.json()
+            name    = (data.get("name",    "") or "")[:200]
+            phone   = (data.get("phone",   "") or "")[:50]
+            email   = (data.get("email",   "") or "")[:200]
+            message = (data.get("message", "") or "")[:1000]
+            save_lead(name, phone, email, message)
+            if ADMIN_ID:
+                await ptb_app.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=(
+                        f"🔔 <b>Новая заявка с сайта!</b>\n\n"
+                        f"👤 {name}\n"
+                        f"📞 {phone}\n"
+                        f"📧 {email}\n"
+                        f"💬 {message or '—'}"
+                    ),
+                    parse_mode="HTML",
+                )
+            return web.Response(
+                text='{"ok":true}', content_type="application/json", headers=cors
+            )
+        except Exception as exc:
+            log.error(f"lead_api error: {exc}")
+            return web.Response(
+                status=500, text='{"ok":false}',
+                content_type="application/json", headers=cors
+            )
+
+    aio = web.Application()
+    aio.router.add_post(f"/{TOKEN}", tg_webhook)
+    aio.router.add_post("/api/lead", lead_api)
+    aio.router.add_route("OPTIONS", "/api/lead", lead_api)
+
+    runner = web.AppRunner(aio)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", port).start()
+    log.info(f"HTTP server on port {port}")
+
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    finally:
+        await ptb_app.stop()
+        await ptb_app.shutdown()
+        await runner.cleanup()
+
+
+def main():
+    init_db()
+    ptb_app = _build_app()
+
     render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+    port = int(os.environ.get("PORT", 8080))
 
     if render_host:
-        log.info(f"Webhook mode: https://{render_host}")
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=TOKEN,
-            webhook_url=f"https://{render_host}/{TOKEN}",
-            drop_pending_updates=True,
-        )
+        log.info(f"Webhook mode on {render_host}")
+        asyncio.run(_run_webhook(ptb_app, render_host, port))
     else:
         log.info("Polling mode (local)")
-        app.run_polling(drop_pending_updates=True)
+        ptb_app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
