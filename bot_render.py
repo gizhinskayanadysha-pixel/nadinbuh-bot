@@ -154,14 +154,14 @@ def get_referral_count(telegram_id: int) -> int:
 
 def user_exists(telegram_id: int) -> bool:
     if not DB_URL:
-        return False
+        return True  # без DB не блокируем доступ к меню
     try:
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1 FROM users WHERE telegram_id = %s", (telegram_id,))
                 return cur.fetchone() is not None
     except Exception:
-        return False
+        return True  # DB недоступна → не блокируем пользователей
 
 def get_referral_tree(telegram_id: int) -> tuple:
     if not DB_URL:
