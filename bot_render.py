@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 
 def get_db():
     import psycopg2
-    return psycopg2.connect(DB_URL)
+    return psycopg2.connect(DB_URL, connect_timeout=5)
 
 def init_db():
     if not DB_URL:
@@ -567,6 +567,18 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # База недоступна (DB_URL пуст или соединение не удалось) — показываем меню без регистрации
+    if not DB_URL:
+        await update.message.reply_text(
+            f"Здравствуйте, {user.first_name}! 👋\n\n"
+            "Я — <b>Надежда Гижинская</b>, бухгалтер для предпринимателей.\n"
+            "Здесь вы найдёте гайды, шаблоны и ответы на налоговые вопросы.\n\n"
+            "Выберите нужный раздел 👇",
+            parse_mode="HTML",
+            reply_markup=MAIN_KB,
+        )
+        return
+
     # Новый пользователь — показываем согласие на обработку данных
     ref_param = str(referred_by) if referred_by else "0"
     await update.message.reply_text(
@@ -734,10 +746,9 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
     # Незарегистрированный пользователь — направляем к /start
-    if not user_exists(user.id):
-        await update.message.reply_text(
-            "👋 Чтобы начать, нажмите /start",
-        )
+    # user_exists() возвращает True при недоступной базе, чтобы не блокировать меню
+    if DB_URL and not user_exists(user.id):
+        await update.message.reply_text("👋 Чтобы начать, нажмите /start")
         return
 
     if txt == "🏢 ООО":
