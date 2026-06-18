@@ -1067,6 +1067,20 @@ async def _run_webhook(ptb_app, render_host: str, port: int):
     await web.TCPSite(runner, "0.0.0.0", port).start()
     log.info(f"HTTP server on port {port}")
 
+    async def _self_ping():
+        import aiohttp
+        url = f"https://{render_host}/api/lead"
+        while True:
+            await asyncio.sleep(4 * 60)
+            try:
+                async with aiohttp.ClientSession() as s:
+                    await s.options(url, timeout=aiohttp.ClientTimeout(total=10))
+            except Exception:
+                pass
+
+    asyncio.create_task(_self_ping())
+    log.info("Self-ping task started (every 4 min)")
+
     try:
         while True:
             await asyncio.sleep(3600)
