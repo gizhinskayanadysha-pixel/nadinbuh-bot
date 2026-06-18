@@ -11,5 +11,5 @@ jobs:
     steps:
       - name: Ping Render
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 https://nadinbuh-bot.onrender.com/api/lead)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 https://nadinbuh-bot.onrender.com/api/lead || echo "timeout")
           echo "Status: $STATUS"
